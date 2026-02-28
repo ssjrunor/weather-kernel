@@ -1,0 +1,104 @@
+% Weather Kernel (CS 3813)
+% File: report/main.tex
+% Description: Proposal/report template for the weather kernel project.
+% Author: Oghenerunor Ewhro
+
+\documentclass[11pt]{article}
+
+\usepackage{geometry}
+\geometry{margin=1in}
+
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{hyperref}
+
+\title{Project Proposal:\\
+Microarchitectural Impact on Performance and Energy Efficiency\\
+of a Weather Simulation Kernel}
+\author{Oghenerunor Ewhro}
+\date{February 2026}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+Modern weather forecasting relies on large-scale numerical simulations that place significant
+demands on processor performance, memory systems, and energy efficiency. These simulations
+commonly use stencil-based finite-difference computations that repeatedly update grid points
+based on neighboring values. As a result, their performance is strongly influenced by CPU
+microarchitectural features such as cache hierarchies, vector execution units, and instruction-level
+optimizations.
+
+This project investigates how architectural choices and compiler optimizations affect the
+performance and energy efficiency of a simplified weather simulation kernel. Rather than running
+a full-scale weather model, we focus on a small representative stencil computation that captures
+the core behavior of real-world simulations while remaining feasible to run on consumer hardware.
+
+\section{Objectives}
+The objectives of this project are:
+\begin{itemize}
+  \item To implement a simplified stencil-based weather simulation kernel in C/C++.
+  \item To evaluate how compiler optimization levels affect execution time and cache behavior.
+  \item To study the relationship between performance improvements and energy efficiency.
+  \item To relate observed performance trends to core computer architecture concepts discussed in class.
+\end{itemize}
+
+\section{Proposed Methodology}
+
+\subsection{Kernel Implementation}
+We will implement a 2D stencil-based finite-difference kernel representative of numerical weather
+prediction workloads. The kernel will update a grid over a fixed number of time steps using a local
+neighborhood (e.g., a 5-point stencil). A baseline version and one optimized version will be developed
+to isolate architectural effects.
+
+\subsection{Experimental Setup}
+Experiments will be conducted on consumer laptop hardware using standard, freely available tools.
+We will compile and execute the kernel using different compiler optimization levels (e.g., \texttt{-O0},
+\texttt{-O2}, \texttt{-O3}, and architecture-specific flags). Measurements will include execution time,
+CPU utilization, cache-related metrics when available, and estimated energy consumption or power
+proxies.
+
+\subsection{Analysis}
+Collected results will be analyzed to determine how changes in compiler optimizations and
+microarchitectural behavior impact performance and energy efficiency. The analysis will focus on
+explaining why certain configurations improve runtime and why faster execution does not always
+lead to lower energy usage.
+
+\section{Project Timeline}
+The project is scheduled to begin in early March and conclude with the submission of the final
+report on March 21.
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Date Range} & \textbf{Planned Activities} \\
+\midrule
+Mar 1 -- Mar 7  & Baseline kernel implementation and initial measurements \\
+Mar 8 -- Mar 14 & Kernel optimization and full experiment matrix \\
+Mar 15 -- Mar 21 & Data analysis, report writing, and final submission \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Division of Work and Estimated Effort}
+
+\subsection*{Oghenerunor Ewhro}
+Sole contributor responsible for implementation, experimentation, and reporting.
+\begin{itemize}
+  \item Baseline stencil kernel implementation
+  \item Optimized kernel development
+  \item Benchmark execution and data collection
+  \item Data visualization and analysis
+  \item Correctness validation and project documentation
+\end{itemize}
+Estimated effort: \textbf{48--56 hours}
+
+\section{Expected Outcomes}
+The expected outcome of this project is a clear demonstration of how CPU microarchitecture and
+compiler optimizations influence the performance and energy efficiency of stencil-based scientific
+computations. The final deliverables will include a written report and a presentation that connect
+experimental observations to architectural principles discussed in the course.
+
+\end{document}

@@ -1,0 +1,20 @@
+# Build artifacts
+bin/
+*.o
+*.out
+cmake-build-debug/
+
+# Generated benchmark outputs
+results/raw/
+results/processed/
+results/figures/
+
+# Python caches / virtual environments
+scripts/__pycache__/
+.venv/
+
+# Editor/OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
