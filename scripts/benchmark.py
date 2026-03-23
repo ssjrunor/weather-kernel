@@ -13,6 +13,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import re
 import shutil
 import statistics
@@ -21,11 +22,14 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Repository root (weather-kernel-main).
 ROOT = Path(__file__).resolve().parents[1]
+# Output directories for raw logs, processed tables, and plots.
 RAW_DIR = ROOT / "results" / "raw"
 PROCESSED_DIR = ROOT / "results" / "processed"
 FIG_DIR = ROOT / "results" / "figures"
 
+# Regex that parses the benchmark program's RESULT line.
 RESULT_RE = re.compile(
     r"RESULT\s+"
     r"N=(?P<N>\d+)\s+"
@@ -35,12 +39,15 @@ RESULT_RE = re.compile(
     r"checksum=(?P<checksum>[-+0-9.eE]+)"
 )
 
+# Default build targets and grid sizes.
 DEFAULT_BUILDS = ["o0", "o2", "o3", "native"]
 DEFAULT_SIZES = [128, 256, 512, 1024, 2048]
+# Reduced set for fast iteration.
 QUICK_SIZES = [128, 256, 512]
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for benchmark configuration and output controls."""
     parser = argparse.ArgumentParser(
         description="Run stencil benchmarks and export structured results."
     )
@@ -82,6 +89,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def parse_int_list(raw: str) -> list[int]:
+    """Parse a comma-separated list of positive integers."""
     values: list[int] = []
     for item in raw.split(","):
         text = item.strip()
@@ -97,6 +105,7 @@ def parse_int_list(raw: str) -> list[int]:
 
 
 def parse_text_list(raw: str) -> list[str]:
+    """Parse a comma-separated list of non-empty strings."""
     values = [item.strip() for item in raw.split(",") if item.strip()]
     if not values:
         raise ValueError("list cannot be empty")
@@ -104,22 +113,29 @@ def parse_text_list(raw: str) -> list[str]:
 
 
 def run_command(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        cmd,
-        cwd=cwd,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    """Run a subprocess and capture stdout/stderr without raising on failure."""
+    try:
+        return subprocess.run(
+            cmd,
+            cwd=cwd,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        cmd0 = cmd[0] if cmd else "<empty command>"
+        raise SystemExit(f"[ERROR] Command not found: {cmd0}. Is it installed and on PATH?") from exc
 
 
 def ensure_directories() -> None:
+    """Create results directories if they do not already exist."""
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def clear_result_artifacts() -> int:
+    """Delete existing result files/directories and return count removed."""
     removed_count = 0
     for directory in (RAW_DIR, PROCESSED_DIR, FIG_DIR):
         if not directory.exists():
@@ -135,16 +151,118 @@ def clear_result_artifacts() -> int:
 
 
 def build_binaries(builds: list[str]) -> None:
-    for build in builds:
-        result = run_command(["make", build], ROOT)
+    """Build binaries for each requested build variant.
+
+    On Linux this uses `make`. On Windows (where `make` may be missing or POSIX
+    commands may not work), we fall back to compiling directly with the C
+    compiler specified by the `CC` environment variable (default: `cc`).
+    """
+
+    def compile_with_cc(build: str, cc: str) -> None:
+        cc = cc.strip().strip('"')
+        if shutil.which(cc) is None and not Path(cc).exists():
+            raise SystemExit(
+                f"[ERROR] C compiler not found: CC={cc}. Install gcc/clang (or MinGW-w64 GCC) "
+                f"and/or set the `CC` environment variable."
+            )
+
+        binary = ROOT / "bin" / f"stencil_{build}"
+        binary.parent.mkdir(parents=True, exist_ok=True)
+
+        sources = [
+            ROOT / "src" / "stencil.c",
+            ROOT / "src" / "timer.c",
+            ROOT / "src" / "checksum.c",
+        ]
+
+        # Mirror the intent of the Makefile flags.
+        cflags_common = [
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-D_POSIX_C_SOURCE=200809L",
+        ]
+
+        if build == "o0":
+            cflags = cflags_common + ["-O0"]
+            cmd = [cc, *cflags, *map(str, sources), "-o", str(binary)]
+            result = run_command(cmd, ROOT)
+        elif build == "o2":
+            cflags = cflags_common + ["-O2"]
+            cmd = [cc, *cflags, *map(str, sources), "-o", str(binary)]
+            result = run_command(cmd, ROOT)
+        elif build == "o3":
+            cflags = cflags_common + ["-O3"]
+            cmd = [cc, *cflags, *map(str, sources), "-o", str(binary)]
+            result = run_command(cmd, ROOT)
+        elif build == "native":
+            cmd_march = [
+                cc,
+                *cflags_common,
+                "-O3",
+                "-march=native",
+                *map(str, sources),
+                "-o",
+                str(binary),
+            ]
+            result = run_command(cmd_march, ROOT)
+            if result.returncode != 0:
+                cmd_mcpu = [
+                    cc,
+                    *cflags_common,
+                    "-O3",
+                    "-mcpu=native",
+                    *map(str, sources),
+                    "-o",
+                    str(binary),
+                ]
+                result = run_command(cmd_mcpu, ROOT)
+        else:
+            raise SystemExit(f"Unknown build variant: {build}")
+
         if result.returncode != 0:
+            print(f"[ERROR] Direct compile failed for build={build} using CC={cc}", file=sys.stderr)
+            if result.stdout:
+                print(result.stdout, file=sys.stderr)
+            if result.stderr:
+                print(result.stderr, file=sys.stderr)
+            raise SystemExit(1)
+
+        print(f"[OK] Built {build} via CC={cc}")
+
+    cc = os.environ.get("CC", "cc")
+    make_available = shutil.which("make") is not None
+
+    for build in builds:
+        if make_available:
+            result = run_command(["make", build], ROOT)
+            if result.returncode == 0:
+                print(f"[OK] Built target: {build}")
+                continue
+
+            # If `make` is present but fails on Windows, try direct compilation.
+            if os.name == "nt":
+                print(
+                    f"[WARN] `make {build}` failed on Windows; falling back to direct compile (CC={cc}).",
+                    file=sys.stderr,
+                )
+                if result.stdout:
+                    print(result.stdout, file=sys.stderr)
+                if result.stderr:
+                    print(result.stderr, file=sys.stderr)
+                compile_with_cc(build, cc)
+                continue
+
             print(f"[ERROR] Build failed for target: {build}", file=sys.stderr)
             if result.stdout:
                 print(result.stdout, file=sys.stderr)
             if result.stderr:
                 print(result.stderr, file=sys.stderr)
             raise SystemExit(1)
-        print(f"[OK] Built target: {build}")
+
+        # No make available.
+        compile_with_cc(build, cc)
 
 
 def run_benchmark(
@@ -153,6 +271,7 @@ def run_benchmark(
     steps: int,
     repeats: int,
 ) -> dict[str, str]:
+    """Run a single benchmark and return the parsed RESULT fields."""
     binary = ROOT / "bin" / f"stencil_{build}"
     result = run_command([str(binary), str(n), str(steps), str(repeats)], ROOT)
     if result.returncode != 0:
@@ -163,6 +282,7 @@ def run_benchmark(
             print(result.stderr, file=sys.stderr)
         raise SystemExit(1)
 
+    # Expect the last stdout line to contain the RESULT payload.
     line = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
     match = RESULT_RE.search(line)
     if not match:
@@ -175,6 +295,7 @@ def run_benchmark(
 
 
 def write_csv(rows: list[dict[str, str]], timestamp: str) -> tuple[Path, Path]:
+    """Write a timestamped CSV and update latest_results.csv."""
     csv_name = f"results_{timestamp}.csv"
     csv_path = PROCESSED_DIR / csv_name
     latest_path = PROCESSED_DIR / "latest_results.csv"
@@ -201,6 +322,7 @@ def write_csv(rows: list[dict[str, str]], timestamp: str) -> tuple[Path, Path]:
 
 
 def write_json(rows: list[dict[str, str]], timestamp: str) -> tuple[Path, Path]:
+    """Write a timestamped JSON payload and update latest_results.json."""
     json_path = PROCESSED_DIR / f"results_{timestamp}.json"
     latest_path = PROCESSED_DIR / "latest_results.json"
 
@@ -228,6 +350,7 @@ def write_json(rows: list[dict[str, str]], timestamp: str) -> tuple[Path, Path]:
 
 
 def write_raw_log(log_lines: list[str], timestamp: str) -> tuple[Path, Path]:
+    """Write a raw text log and update latest.log."""
     log_path = RAW_DIR / f"benchmark_{timestamp}.log"
     latest_path = RAW_DIR / "latest.log"
     with log_path.open("w", encoding="utf-8") as handle:
@@ -238,10 +361,12 @@ def write_raw_log(log_lines: list[str], timestamp: str) -> tuple[Path, Path]:
 
 
 def almost_equal(a: float, b: float) -> bool:
+    """Tight float comparison for checksum validation across builds."""
     return math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-12)
 
 
 def find_checksum_warnings(rows: list[dict[str, str]]) -> list[str]:
+    """Group checksums by N and report any mismatches across builds."""
     by_n: dict[str, list[tuple[str, float]]] = {}
     for row in rows:
         by_n.setdefault(row["N"], []).append((row["build"], float(row["checksum"])))
@@ -261,6 +386,7 @@ def find_checksum_warnings(rows: list[dict[str, str]]) -> list[str]:
 
 
 def create_runtime_tables(rows: list[dict[str, str]], builds: list[str]) -> tuple[list[str], list[str], str]:
+    """Create markdown tables and return the fastest overall build."""
     by_n: dict[int, dict[str, float]] = {}
     by_build: dict[str, list[float]] = {build: [] for build in builds}
     for row in rows:
@@ -281,6 +407,7 @@ def create_runtime_tables(rows: list[dict[str, str]], builds: list[str]) -> tupl
         grid_lines.append("| " + " | ".join(row_cells) + " |")
 
     rank_lines = ["| Build | Mean runtime (s) | Speedup vs o0 |", "|---|---:|---:|"]
+    # "o0" is the baseline for relative speedup.
     o0_mean = statistics.fmean(by_build["o0"]) if by_build.get("o0") else float("nan")
     mean_by_build = [
         (build, statistics.fmean(runtimes))
@@ -312,6 +439,7 @@ def write_summary(
     log_latest: Path,
     plot_paths: list[Path],
 ) -> tuple[Path, Path]:
+    """Write a markdown summary and update latest_summary.md."""
     warnings = find_checksum_warnings(rows)
     grid_lines, rank_lines, fastest_overall = create_runtime_tables(rows, builds)
     summary_path = PROCESSED_DIR / f"summary_{timestamp}.md"
@@ -365,6 +493,7 @@ def generate_plots(
     builds: list[str],
     timestamp: str,
 ) -> list[Path]:
+    """Generate PNG plots if matplotlib is available."""
     try:
         import matplotlib.pyplot as plt  # type: ignore
     except Exception:
@@ -382,8 +511,10 @@ def generate_plots(
 
     output_paths: list[Path] = []
 
+    # Bar chart of mean runtime per build.
     mean_times = [statistics.fmean(by_build[build]) for build in builds if by_build.get(build)]
     mean_builds = [build for build in builds if by_build.get(build)]
+    # Line chart of runtime vs grid size for each build.
     plt.figure(figsize=(8, 4.5))
     plt.bar(mean_builds, mean_times)
     plt.xlabel("Build")
@@ -421,10 +552,12 @@ def generate_plots(
 
 
 def main() -> None:
+    """Entry point: build, run, and export benchmark artifacts."""
     args = parse_args()
 
     ensure_directories()
 
+    # Optional cleanup of prior outputs.
     if args.clear_results or args.clear_only:
         removed_count = clear_result_artifacts()
         print(f"[INFO] Cleared {removed_count} result artifact(s).")
@@ -433,9 +566,11 @@ def main() -> None:
         print("[INFO] Clear-only mode complete.")
         return
 
+    # Basic input validation.
     if args.steps <= 0 or args.repeats <= 0:
         raise SystemExit("steps and repeats must be positive")
 
+    # Resolve sizes/builds, defaulting to quick or full matrix.
     try:
         if args.sizes.strip():
             sizes = parse_int_list(args.sizes)
@@ -446,6 +581,7 @@ def main() -> None:
         raise SystemExit(f"invalid argument: {exc}") from exc
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+    # Build all requested targets before running benchmarks.
     build_binaries(builds)
 
     rows: list[dict[str, str]] = []
@@ -464,6 +600,7 @@ def main() -> None:
             log_lines.append(line)
             print(f"[OK] {line}")
 
+    # Export raw + structured results.
     csv_path, csv_latest = write_csv(rows, timestamp)
     json_path, json_latest = write_json(rows, timestamp)
     log_path, log_latest = write_raw_log(log_lines, timestamp)

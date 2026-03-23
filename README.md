@@ -24,7 +24,7 @@ The correctness check is checksum-based. For the same workload (`N`, `steps`, `r
 
 ## Requirements
 - C compiler with C11 support (`cc`, `clang`, or `gcc`)
-- GNU Make
+- GNU Make (optional on Windows; Python falls back to direct compilation)
 - Python 3
 - Optional: `matplotlib` for plot generation (`.png`)
 
@@ -39,6 +39,28 @@ Equivalent:
 
 ```bash
 make quick
+```
+
+## Windows
+To run on Windows, use the wrapper scripts (or call the Python script directly):
+
+```bat
+run.bat
+```
+
+```powershell
+./run.ps1 -Mode quick
+```
+
+Prerequisites:
+- Python 3
+- A C compiler that can build the C sources (recommended: MinGW-w64 GCC or Clang)
+
+If your compiler isn’t on `PATH`, set `CC` first:
+
+```bat
+set CC=gcc
+run.bat
 ```
 
 Clear old result artifacts only:
@@ -247,3 +269,6 @@ bin/stencil_o3 1024 300 10
 
 ## Author
 - Oghenerunor Ewhro
+
+## Contributors
+- Cedrick TAHMO
